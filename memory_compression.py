@@ -7,6 +7,7 @@ import os
 import sys
 import transformers
 import numpy as np
+import jsonlines
 
 import bitsandbytes as bnb
 from peft import (
@@ -288,6 +289,7 @@ def main():
         batch_size=1,
     )
 
+    outputs = []
     for batch in tqdm(test_dataloader):
         # print(batch)
         input_ids = batch['input_ids'].to(device)
@@ -313,14 +315,12 @@ def main():
             orig_decoded = tokenizer.batch_decode(orig_output, skip_special_tokens=True)
 
             for i, p, c, o in zip(batch['input'], batch['prompt'], compressed_decoded, orig_decoded):
-                print(i)
-                print(p)
-                print(c)
-                print(o)
+                outputs.append({'input': i, 'prompt': p, 'compressed_answer': c.split('Answer: ')[1].strip(), 'uncompressed_answer': o.split('Answer: ')[1].strip()})
+                
+        # exit()
 
-            # print(tokenizer.batch_decode(torch.cat([input_ids, prompt_ids], dim=1), skip_special_tokens=True))
-
-        exit()
+    with jsonlines.open('output.jsonl', 'w') as writer:
+        writer.write_all(outputs)
 
 if __name__ == "__main__":
     main()
