@@ -218,10 +218,9 @@ def train(
     model.save_pretrained(output_dir)
 
 def random_removal(past_key_values, compress_to=200):  # (batch_size, num_heads, sequence_length, embed_size_per_head)
-    rand_indices = np.random.choice(past_key_values[0][0].shape[2], size=compress_to, replace=False)
-
     compressed_past_kv = []
     for j in range(len(past_key_values)):
+        rand_indices = np.random.choice(past_key_values[j][0].shape[2], size=compress_to, replace=False)
         compressed_past_kv.append([])
         for k in range(len(past_key_values[j])):
             compressed = past_key_values[j][k][:, :, rand_indices, :]
@@ -236,8 +235,8 @@ def max_pool(past_key_values, compress_to=200):
     for j in range(len(past_key_values)):
         compressed_past_kv.append([])
         for k in range(len(past_key_values[j])):
-            a, b, c, d = past_key_values[j][k].shape
-            compressed = rearrange(max_pool1d(rearrange(past_key_values[j][k], 'a b c d -> a (b d) c'), kernel_size=2), 'a (b d) c -> a b c d', a=a, b=b, d=d)
+            b, n, s, e = past_key_values[j][k].shape
+            compressed = rearrange(max_pool1d(rearrange(past_key_values[j][k], 'b n s e -> b (n e) s'), kernel_size=2), 'b (n e) s -> b n s e', b=b, n=n, e=e)
             compressed_past_kv[j].append(compressed)
         compressed_past_kv[j] = tuple(compressed_past_kv[j])
     compressed_past_kv = tuple(compressed_past_kv)
@@ -247,13 +246,11 @@ def max_pool(past_key_values, compress_to=200):
 def kmeans(past_key_values, compress_to=200):
     compressed_past_kv = []
     for j in range(len(past_key_values)):
-        compressed_past_kv.append([])
-        for k in range(len(past_key_values[j])):
-            a, b, c, d = past_key_values[j][k].shape
-            centers = MiniBatchKMeans(n_clusters=compress_to, random_state=0).fit(rearrange(past_key_values[j][k], 'a b c d -> c (a b d)').detach().cpu().numpy()).cluster_centers_
-            compressed = rearrange(torch.from_numpy(centers).to(device), 'c (a b d) -> a b c d', a=a, b=b, d=d)
-            compressed_past_kv[j].append(compressed)
-        compressed_past_kv[j] = tuple(compressed_past_kv[j])
+        joined_kv = torch.stack([past_key_values[j][0], past_key_values[j][1]])
+        z, b, n, s, e = joined_kv.shape
+        centers = MiniBatchKMeans(n_clusters=compress_to, random_state=0, n_init='auto').fit(rearrange(joined_kv, 'z b n s e -> s (z b n e)').detach().cpu().numpy()).cluster_centers_
+        compressed = rearrange(torch.from_numpy(centers).to(device), 's (z b n e) -> z b n s e', z=z, b=b, n=n, e=e)
+        compressed_past_kv.append((compressed[0], compressed[1]))
     compressed_past_kv = tuple(compressed_past_kv)
 
     return compressed_past_kv
@@ -316,8 +313,6 @@ def main():
 
             for i, p, c, o in zip(batch['input'], batch['prompt'], compressed_decoded, orig_decoded):
                 outputs.append({'input': i, 'prompt': p, 'compressed_answer': c.split('Answer: ')[1].strip(), 'uncompressed_answer': o.split('Answer: ')[1].strip()})
-                
-        # exit()
 
     with jsonlines.open('output.jsonl', 'w') as writer:
         writer.write_all(outputs)
